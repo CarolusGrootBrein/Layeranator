@@ -1,0 +1,229 @@
+<html><head><base href="." /><title>Image Combiner Tool</title><style>
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background: #f0f4f8;
+}
+
+#canvas {
+    border: 2px solid #333;
+    background: white;
+    margin: 20px 0;
+}
+
+.controls {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.important-note {
+    background: #fff3cd;
+    border: 1px solid #ffeeba;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+
+button {
+    background: #4CAF50;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 5px;
+}
+
+button:hover {
+    background: #45a049;
+}
+
+textarea {
+    width: 100%;
+    height: 100px;
+    margin: 10px 0;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+#downloadLink {
+    display: block;
+    margin: 10px 0;
+    padding: 10px;
+    background: #e3f2fd;
+    border: 1px solid #bbdefb;
+    border-radius: 4px;
+    text-decoration: none;
+    color: #1976d2;
+}
+
+#downloadLink:hover {
+    background: #bbdefb;
+}
+
+.imageUrl {
+    word-break: break-all;
+    margin: 10px 0;
+    padding: 10px;
+    background: #e8f5e9;
+    border: 1px solid #c8e6c9;
+    border-radius: 4px;
+}
+</style></head><body>
+<div class="controls">
+    <h2>Image Combiner Tool</h2>
+    
+    <div class="important-note">
+        <strong>HTTP Request Information:</strong><br>
+        When making a POST request to this tool, send JSON data in the following format:<br>
+        <code>{ "urls": ["https://dropbox.com/url1", "https://dropbox.com/url2"] }</code><br>
+        The response will be the combined image data that you can use for further processing or uploading.
+    </div>
+
+    <p>Paste your Dropbox image URLs (one per line):</p>
+    <textarea id="urlInput" placeholder="https://www.dropbox.com/...
+https://www.dropbox.com/..."></textarea>
+    <div>
+        <button onclick="processImages()">Combine Images</button>
+        <button onclick="downloadImage()">Download Combined Image</button>
+    </div>
+
+    <div id="resultLink" class="imageUrl" style="display: none;">
+        <strong>Combined Image Preview Available</strong>
+    </div>
+</div>
+
+<canvas id="canvas" width="4000" height="4000"></canvas>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = 'high';
+
+async function handlePostRequest(request) {
+    const data = await request.json();
+    if (data && data.urls && Array.isArray(data.urls)) {
+        document.getElementById('urlInput').value = data.urls.join('\n');
+        const success = await processImages();
+        if (success) {
+            const imageData = canvas.toDataURL('image/png', 1.0);
+            return {
+                success: true,
+                message: "Images combined successfully",
+                imageCount: data.urls.length,
+                combinedImageData: imageData
+            };
+        }
+    }
+    return {
+        success: false,
+        message: "Invalid request format or processing failed"
+    };
+}
+
+function downloadImage() {
+    const imageData = canvas.toDataURL('image/png', 1.0);
+    const downloadLink = document.createElement('a');
+    downloadLink.href = imageData;
+    downloadLink.download = 'combined-image.png';
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+}
+
+if (window.addEventListener) {
+    window.addEventListener('load', function() {
+        if (window.location.search) {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('urls')) {
+                try {
+                    const urls = JSON.parse(urlParams.get('urls'));
+                    document.getElementById('urlInput').value = urls.join('\n');
+                    processImages();
+                } catch (e) {
+                    console.error('Error parsing URLs:', e);
+                }
+            }
+        }
+    });
+}
+
+async function processImages() {
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const urls = document.getElementById('urlInput').value
+        .split('\n')
+        .filter(url => url.trim() !== '');
+    
+    if (urls.length === 0) {
+        alert('Please enter at least one URL');
+        return false;
+    }
+
+    const directUrls = urls.map(url => {
+        return url.replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+                 .replace('?dl=0', '')
+                 .replace('?dl=1', '') + '?raw=1';
+    });
+
+    const loadImage = async (url) => {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+            img.src = url + (url.includes('?') ? '&' : '?') + 'cb=' + new Date().getTime();
+        });
+    };
+
+    try {
+        const images = await Promise.all(directUrls.map(url => loadImage(url)));
+        
+        const rows = Math.ceil(Math.sqrt(images.length));
+        const cols = Math.ceil(images.length / rows);
+        const cellWidth = canvas.width / cols;
+        const cellHeight = canvas.height / rows;
+
+        ctx.webkitImageSmoothingEnabled = true;
+        ctx.mozImageSmoothingEnabled = true;
+        ctx.msImageSmoothingEnabled = true;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        images.forEach((img, index) => {
+            const row = Math.floor(index / cols);
+            const col = index % cols;
+            const x = col * cellWidth;
+            const y = row * cellHeight;
+            
+            const scale = Math.min(
+                cellWidth / img.width,
+                cellHeight / img.height
+            );
+            
+            const scaledWidth = img.width * scale;
+            const scaledHeight = img.height * scale;
+            
+            const xOffset = x + (cellWidth - scaledWidth) / 2;
+            const yOffset = y + (cellHeight - scaledHeight) / 2;
+            
+            ctx.drawImage(img, xOffset, yOffset, scaledWidth, scaledHeight);
+        });
+
+        document.getElementById('resultLink').style.display = 'block';
+        return true;
+    } catch (error) {
+        console.error('Error processing images:', error);
+        alert('Error processing images. Please check your URLs and try again.');
+        return false;
+    }
+}
+</script>
+
+</body></html>
